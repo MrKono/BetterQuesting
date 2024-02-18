@@ -78,6 +78,7 @@ public class TaskRetrieval implements ITaskInventory, IItemTask {
         if (isComplete(pInfo.UUID))
             return;
 
+        // List of (player uuid, [progress per required item])
         final List<Tuple<UUID, int[]>> progress = getBulkProgress(consume ? Collections.singletonList(pInfo.UUID) : pInfo.ALL_UUIDS);
         boolean updated = false;
 
@@ -103,17 +104,17 @@ public class TaskRetrieval implements ITaskInventory, IItemTask {
         if (consume) {
             invoList = Collections.singletonList(pInfo.PLAYER.inventory);
         } else {
-            invoList = new ArrayList<>();
+            invoList = new ArrayList<>(pInfo.ACTIVE_PLAYERS.size());
             pInfo.ACTIVE_PLAYERS.forEach((p) -> invoList.add(p.inventory));
         }
 
+        int[] remCounts = new int[progress.size()];
         for (InventoryPlayer invo : invoList) {
             for (int i = 0; i < invo.getSizeInventory(); i++) {
                 ItemStack stack = invo.getStackInSlot(i);
                 if (stack.isEmpty())
                     continue;
                 // Allows the stack detection to split across multiple requirements. Counts may vary per person
-                int[] remCounts = new int[progress.size()];
                 Arrays.fill(remCounts, stack.getCount());
 
                 for (int j = 0; j < requiredItems.size(); j++) {
@@ -148,11 +149,15 @@ public class TaskRetrieval implements ITaskInventory, IItemTask {
 
         if (updated)
             setBulkProgress(progress);
-        checkAndComplete(pInfo, quest, updated);
+        // Reuse progress
+        checkAndComplete(pInfo, quest, updated, progress);
     }
 
     private void checkAndComplete(ParticipantInfo pInfo, DBEntry<IQuest> quest, boolean resync) {
-        final List<Tuple<UUID, int[]>> progress = getBulkProgress(consume ? Collections.singletonList(pInfo.UUID) : pInfo.ALL_UUIDS);
+        checkAndComplete(pInfo, quest, resync, getBulkProgress(consume ? Collections.singletonList(pInfo.UUID) : pInfo.ALL_UUIDS));
+    }
+
+    private void checkAndComplete(ParticipantInfo pInfo, DBEntry<IQuest> quest, boolean resync, List<Tuple<UUID, int[]>> progress) {
         boolean updated = resync;
 
         for (Tuple<UUID, int[]> value : progress) {
@@ -410,7 +415,7 @@ public class TaskRetrieval implements ITaskInventory, IItemTask {
     private List<Tuple<UUID, int[]>> getBulkProgress(@Nonnull List<UUID> uuids) {
         if (uuids.size() <= 0)
             return Collections.emptyList();
-        List<Tuple<UUID, int[]>> list = new ArrayList<>();
+        List<Tuple<UUID, int[]>> list = new ArrayList<>(uuids.size());
         uuids.forEach((key) -> list.add(new Tuple<>(key, getUsersProgress(key))));
         return list;
     }

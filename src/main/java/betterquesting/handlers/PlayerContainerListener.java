@@ -50,7 +50,10 @@ public class PlayerContainerListener implements IContainerListener {
 
     @Override
     public void sendSlotContents(@Nonnull Container container, int i, @Nonnull ItemStack itemStack) {
-        updateTasks();
+        // Ignore changes outside of main inventory (e.g. crafting grid and armor)
+        if (i >= 9 && i <= 44) {
+            updateTasks();
+        }
     }
 
     @Override
@@ -62,13 +65,6 @@ public class PlayerContainerListener implements IContainerListener {
     }
 
     private void updateTasks() {
-        ParticipantInfo pInfo = new ParticipantInfo(player);
-
-        for (DBEntry<IQuest> entry : QuestingAPI.getAPI(ApiReference.QUEST_DB).bulkLookup(pInfo.getSharedQuests())) {
-            for (DBEntry<ITask> task : entry.getValue().getTasks().getEntries()) {
-                if (task.getValue() instanceof ITaskInventory)
-                    ((ITaskInventory) task.getValue()).onInventoryChange(entry, pInfo);
-            }
-        }
+        EventHandler.schedulePlayerInventoryCheck(player);
     }
 }

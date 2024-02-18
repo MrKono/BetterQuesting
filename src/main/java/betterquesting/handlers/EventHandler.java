@@ -56,6 +56,7 @@ import net.minecraft.world.GameType;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.client.event.TextureStitchEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.event.AttachCapabilitiesEvent;
 import net.minecraftforge.event.CommandEvent;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
@@ -84,6 +85,7 @@ import net.minecraftforge.items.ItemHandlerHelper;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -417,10 +419,43 @@ public class EventHandler {
     private final ArrayDeque<EntityPlayerMP> opQueue = new ArrayDeque<>();
     private boolean openToLAN = false;
 
+    private static final HashSet<EntityPlayer> playerInventoryUpdates = new HashSet<>();
+    private static boolean processingUpdates = false;
+
+    /**
+     * Schedules checking player's inventory on the next server tick.
+     * Deduplicates requests to avoid scanning it multiple times per tick.
+     */
+    public static void schedulePlayerInventoryCheck(EntityPlayer player) {
+        if (processingUpdates) {
+            return;
+        }
+        synchronized (playerInventoryUpdates) {
+            playerInventoryUpdates.add(player);
+        }
+    }
+
     @SubscribeEvent
     public void onServerTick(ServerTickEvent event) {
-        if (event.phase == Phase.START && FMLCommonHandler.instance().getMinecraftServerInstance().getTickCounter() % 60 == 0) {
-            AdvListenerManager.INSTANCE.updateAll();
+        if (event.phase == Phase.START) {
+            if (FMLCommonHandler.instance().getMinecraftServerInstance().getTickCounter() % 60 == 0) {
+                AdvListenerManager.INSTANCE.updateAll();
+            }
+            processingUpdates = true;
+            for (EntityPlayer player : playerInventoryUpdates) {
+                if (player == null || player.inventory == null) {
+                    continue;
+                }
+                ParticipantInfo pInfo = new ParticipantInfo(player);
+
+                for (DBEntry<IQuest> entry : QuestingAPI.getAPI(ApiReference.QUEST_DB).bulkLookup(pInfo.getSharedQuests())) {
+                    for (DBEntry<ITask> task : entry.getValue().getTasks().getEntries()) {
+                        if (task.getValue() instanceof ITaskInventory) ((ITaskInventory)task.getValue()).onInventoryChange(entry, pInfo);
+                    }
+                }
+            }
+            playerInventoryUpdates.clear();
+            processingUpdates = false;
         }
 
         if (event.phase != Phase.END) return;
@@ -452,7 +487,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onRightClickItem(PlayerInteractEvent.RightClickItem event) {
-        if (event.getEntityPlayer() == null || event.getEntityLiving().world.isRemote || event.isCanceled()) return;
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.isCanceled()) return;
 
         EntityPlayer player = event.getEntityPlayer();
         ParticipantInfo pInfo = new ParticipantInfo(player);
@@ -469,7 +504,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getEntityPlayer() == null || event.getEntityLiving().world.isRemote || event.isCanceled()) return;
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.isCanceled()) return;
 
         EntityPlayer player = event.getEntityPlayer();
         ParticipantInfo pInfo = new ParticipantInfo(player);
@@ -488,7 +523,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        if (event.getEntityPlayer() == null || event.getEntityLiving().world.isRemote || event.isCanceled()) return;
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.isCanceled()) return;
 
         EntityPlayer player = event.getEntityPlayer();
         ParticipantInfo pInfo = new ParticipantInfo(player);
@@ -508,20 +543,20 @@ public class EventHandler {
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onRightClickEmpty(PlayerInteractEvent.RightClickEmpty event) // CLIENT SIDE ONLY EVENT
     {
-        if (event.getEntityPlayer() == null || !event.getEntityLiving().world.isRemote || event.isCanceled()) return;
+        if (event.getEntityPlayer() == null || !event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.isCanceled()) return;
         NetTaskInteract.requestInteraction(false, event.getHand() == EnumHand.MAIN_HAND);
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onLeftClickAir(PlayerInteractEvent.LeftClickEmpty event) // CLIENT SIDE ONLY EVENT
     {
-        if (event.getEntityPlayer() == null || !event.getEntityLiving().world.isRemote || event.isCanceled()) return;
+        if (event.getEntityPlayer() == null || !event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.isCanceled()) return;
         NetTaskInteract.requestInteraction(true, true);
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onEntityAttack(AttackEntityEvent event) {
-        if (event.getEntityPlayer() == null || event.getTarget() == null || event.getEntityPlayer().world.isRemote || event.isCanceled())
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.getTarget() == null || event.isCanceled())
             return;
 
         EntityPlayer player = event.getEntityPlayer();
@@ -539,7 +574,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
-        if (event.getEntityPlayer() == null || event.getTarget() == null || event.getEntityPlayer().world.isRemote || event.isCanceled())
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer || event.getTarget() == null || event.isCanceled())
             return;
 
         EntityPlayer player = event.getEntityPlayer();
@@ -557,7 +592,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onItemCrafted(PlayerEvent.ItemCraftedEvent event) {
-        if (event.player == null || event.player.world.isRemote) return;
+        if (event.player == null || event.player.world.isRemote || event.player instanceof FakePlayer) return;
 
         ParticipantInfo pInfo = new ParticipantInfo(event.player);
 
@@ -573,7 +608,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onItemSmelted(PlayerEvent.ItemSmeltedEvent event) {
-        if (event.player == null || event.player.world.isRemote) return;
+        if (event.player == null || event.player.world.isRemote || event.player instanceof FakePlayer) return;
 
         ParticipantInfo pInfo = new ParticipantInfo(event.player);
 
@@ -589,7 +624,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onItemAnvil(AnvilRepairEvent event) {
-        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote) return;
+        if (event.getEntityPlayer() == null || event.getEntityPlayer().world.isRemote || event.getEntityPlayer() instanceof FakePlayer) return;
 
         ParticipantInfo pInfo = new ParticipantInfo(event.getEntityPlayer());
         List<DBEntry<IQuest>> actQuest = QuestingAPI.getAPI(ApiReference.QUEST_DB).bulkLookup(pInfo.getSharedQuests());
@@ -604,7 +639,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onEntityKilled(LivingDeathEvent event) {
-        if (event.getSource() == null || !(event.getSource().getTrueSource() instanceof EntityPlayer) || event.getSource().getTrueSource().world.isRemote || event.isCanceled())
+        if (event.getSource() == null || !(event.getSource().getTrueSource() instanceof EntityPlayer) || event.getSource().getTrueSource().world.isRemote || event.getSource().getTrueSource() instanceof FakePlayer || event.isCanceled())
             return;
 
         ParticipantInfo pInfo = new ParticipantInfo((EntityPlayer) event.getSource().getTrueSource());
@@ -635,7 +670,7 @@ public class EventHandler {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onBlockBreak(BlockEvent.BreakEvent event) {
-        if (event.getPlayer() == null || event.getPlayer().world.isRemote || event.isCanceled()) return;
+        if (event.getPlayer() == null || event.getPlayer().world.isRemote || event.getPlayer() instanceof FakePlayer || event.isCanceled()) return;
 
         ParticipantInfo pInfo = new ParticipantInfo(event.getPlayer());
 
